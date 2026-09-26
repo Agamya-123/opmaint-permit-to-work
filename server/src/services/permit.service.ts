@@ -552,7 +552,38 @@ export async function resumePermit(
 export async function closePermit(
   permitId: string,
   closerId: string,
+  reason?: string,
 ): Promise<{ permitId: string; toStatus: PermitStatus; event: string }> {
+  const permit = await prisma.permit.findUnique({
+    where: { id: permitId },
+  });
+
+  if (!permit) {
+    throw new PrismaClientKnownRequestError('Permit not found', {
+      code: 'P2025',
+      clientVersion: '',
+      meta: { model: 'Permit' },
+    });
+  }
+
+  const closer = await prisma.user.findUnique({
+    where: { id: closerId },
+  });
+
+  if (!closer) {
+    const err: any = new Error('User not found');
+    err.code = 'UNAUTHORIZED';
+    err.httpStatus = 403;
+    throw err;
+  }
+
+  if (permit.requesterId !== closerId && closer.role !== 'ADMIN') {
+    const err: any = new Error('Only the permit requester or an Admin can mark work complete and close the permit');
+    err.code = 'FORBIDDEN';
+    err.httpStatus = 403;
+    throw err;
+  }
+
   const snapshot = await loadPermit(permitId);
 
   if (snapshot.status !== 'ACTIVE') {
@@ -562,6 +593,7 @@ export async function closePermit(
     );
   }
 
+  const now = new Date();
   const result = transition(
     {
       status: snapshot.status,
@@ -569,13 +601,17 @@ export async function closePermit(
       plannedEnd: snapshot.plannedEnd,
       allRequiredApprovalsGranted: snapshot.allRequiredApprovalsGranted,
     },
-    { action: 'CLOSE', now: new Date() },
+    { action: 'CLOSE', now, reason },
   );
 
   await prisma.$transaction(async (tx) => {
     await tx.permit.update({
       where: { id: permitId },
-      data: { status: result.to },
+      data: {
+        status: result.to,
+        closedAt: now,
+        closureNotes: reason || null,
+      },
     });
     await tx.auditLog.create({
       data: {
@@ -584,6 +620,7 @@ export async function closePermit(
         event: result.event,
         fromStatus: result.from,
         toStatus: result.to,
+        reason: reason || null,
         metadata: {},
       },
     });
@@ -595,7 +632,38 @@ export async function closePermit(
 export async function verifyClosure(
   permitId: string,
   verifierId: string,
+  reason?: string,
 ): Promise<{ permitId: string; toStatus: PermitStatus; event: string }> {
+  const permit = await prisma.permit.findUnique({
+    where: { id: permitId },
+  });
+
+  if (!permit) {
+    throw new PrismaClientKnownRequestError('Permit not found', {
+      code: 'P2025',
+      clientVersion: '',
+      meta: { model: 'Permit' },
+    });
+  }
+
+  const verifier = await prisma.user.findUnique({
+    where: { id: verifierId },
+  });
+
+  if (!verifier) {
+    const err: any = new Error('User not found');
+    err.code = 'UNAUTHORIZED';
+    err.httpStatus = 403;
+    throw err;
+  }
+
+  if (verifier.role !== 'SAFETY_OFFICER' && verifier.role !== 'ADMIN') {
+    const err: any = new Error('Only a Safety Officer or Admin can verify permit closure');
+    err.code = 'FORBIDDEN';
+    err.httpStatus = 403;
+    throw err;
+  }
+
   const snapshot = await loadPermit(permitId);
 
   if (snapshot.status !== 'CLOSED') {
@@ -605,6 +673,7 @@ export async function verifyClosure(
     );
   }
 
+  const now = new Date();
   const result = transition(
     {
       status: snapshot.status,
@@ -612,13 +681,16 @@ export async function verifyClosure(
       plannedEnd: snapshot.plannedEnd,
       allRequiredApprovalsGranted: snapshot.allRequiredApprovalsGranted,
     },
-    { action: 'VERIFY_CLOSURE', now: new Date() },
+    { action: 'VERIFY_CLOSURE', now, reason },
   );
 
   await prisma.$transaction(async (tx) => {
     await tx.permit.update({
       where: { id: permitId },
-      data: { status: result.to },
+      data: {
+        status: result.to,
+        verifiedAt: now,
+      },
     });
     await tx.auditLog.create({
       data: {
@@ -627,6 +699,7 @@ export async function verifyClosure(
         event: result.event,
         fromStatus: result.from,
         toStatus: result.to,
+        reason: reason || null,
         metadata: {},
       },
     });

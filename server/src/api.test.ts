@@ -225,7 +225,16 @@ describe('Opmaint PTW REST API Integration Tests', () => {
       expect(res.body.event).toBe('WORK_LOGGED');
     });
 
-    it('POST /api/permits/:id/action - CLOSE permit', async () => {
+    it('POST /api/permits/:id/action - CLOSE permit fails for non-requester', async () => {
+      const res = await request(app)
+        .post(`/api/permits/${createdPermitId}/action`)
+        .set('Authorization', `Bearer ${areaOwnerToken}`)
+        .send({ action: 'CLOSE', reason: 'Trying to close as area owner' });
+
+      expect(res.status).toBe(403);
+    });
+
+    it('POST /api/permits/:id/action - CLOSE permit succeeds for requester', async () => {
       const res = await request(app)
         .post(`/api/permits/${createdPermitId}/action`)
         .set('Authorization', `Bearer ${requesterToken}`)
@@ -233,6 +242,15 @@ describe('Opmaint PTW REST API Integration Tests', () => {
 
       expect(res.status).toBe(200);
       expect(res.body.toStatus).toBe('CLOSED');
+    });
+
+    it('POST /api/permits/:id/action - VERIFY_CLOSURE fails for non-Safety Officer', async () => {
+      const res = await request(app)
+        .post(`/api/permits/${createdPermitId}/action`)
+        .set('Authorization', `Bearer ${requesterToken}`)
+        .send({ action: 'VERIFY_CLOSURE', reason: 'Trying to verify as requester' });
+
+      expect(res.status).toBe(403);
     });
 
     it('POST /api/permits/:id/action - VERIFY_CLOSURE by Safety Officer', async () => {
