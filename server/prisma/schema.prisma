@@ -1,0 +1,248 @@
+// Opmaint PTW — Prisma schema
+// Engine: SQLite for local dev/testing (ready for PostgreSQL in production).
+// See docs/DATABASE_DESIGN.md for the reasoning behind every decision here.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum UserRole {
+  REQUESTER
+  AREA_OWNER
+  SAFETY_OFFICER
+  ADMIN
+}
+
+enum PermitType {
+  HOT_WORK
+  CONFINED_SPACE
+  WORKING_AT_HEIGHT
+  ELECTRICAL_LOTO
+  EXCAVATION
+}
+
+enum PermitStatus {
+  DRAFT
+  PENDING_APPROVAL
+  APPROVED
+  ACTIVE
+  SUSPENDED
+  EXPIRED
+  REJECTED
+  CLOSED
+  CLOSED_VERIFIED
+  CANCELLED
+}
+
+enum ApprovalRole {
+  AREA_OWNER
+  SAFETY_OFFICER
+}
+
+enum ApprovalDecision {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum AuditEvent {
+  CREATED
+  UPDATED
+  SUBMITTED
+  APPROVED
+  REJECTED
+  ACTIVATED
+  SUSPENDED
+  RESUMED
+  CLOSED
+  CLOSURE_VERIFIED
+  CANCELLED
+  EXPIRED
+  WORK_LOGGED
+}
+
+// ---------------------------------------------------------------------------
+// Master data: plant -> area -> equipment
+// ---------------------------------------------------------------------------
+
+model Plant {
+  id        String   @id @default(uuid())
+  name      String
+  code      String   @unique
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  areas   Area[]
+  users   User[]
+  permits Permit[]
+
+  @@map("plants")
+}
+
+model Area {
+  id        String   @id @default(uuid())
+  name      String
+  plantId   String   @map("plant_id")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  plant     Plant       @relation(fields: [plantId], references: [id], onDelete: Restrict)
+  equipment Equipment[]
+  owners    AreaOwner[]
+  permits   Permit[]
+
+  @@unique([plantId, name])
+  @@index([plantId])
+  @@map("areas")
+}
+
+model Equipment {
+  id        String   @id @default(uuid())
+  name      String
+  tag       String   @unique
+  areaId    String   @map("area_id")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  area    Area     @relation(fields: [areaId], references: [id], onDelete: Restrict)
+  permits Permit[]
+
+  @@index([areaId])
+  @@map("equipment")
+}
+
+// ---------------------------------------------------------------------------
+// Users and area ownership
+// ---------------------------------------------------------------------------
+
+model User {
+  id           String   @id @default(uuid())
+  name         String
+  email        String   @unique
+  passwordHash String   @map("password_hash")
+  role         UserRole
+  plantId      String?  @map("plant_id")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  plant            Plant?           @relation(fields: [plantId], references: [id], onDelete: SetNull)
+  ownedAreas       AreaOwner[]
+  requestedPermits Permit[]         @relation("PermitRequester")
+  approvals        PermitApproval[]
+  auditEvents      AuditLog[]
+
+  @@index([role])
+  @@index([plantId])
+  @@map("users")
+}
+
+model AreaOwner {
+  areaId    String   @map("area_id")
+  userId    String   @map("user_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  area Area @relation(fields: [areaId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([areaId, userId])
+  @@index([userId])
+  @@map("area_owners")
+}
+
+// ---------------------------------------------------------------------------
+// Permit: shared relational core + type-specific JSON body
+// ---------------------------------------------------------------------------
+
+model Permit {
+  id           String       @id @default(uuid())
+  permitNumber String       @unique @map("permit_number")
+  type         PermitType
+  status       PermitStatus @default(DRAFT)
+
+  requesterId     String  @map("requester_id")
+  contractorTeam  String? @map("contractor_team")
+  workDescription String  @map("work_description")
+
+  plantId     String  @map("plant_id")
+  areaId      String  @map("area_id")
+  equipmentId String? @map("equipment_id")
+
+  plannedStart DateTime @map("planned_start")
+  plannedEnd   DateTime @map("planned_end")
+
+  hazards      Json
+  ppe          Json
+  precautions  Json
+  typeData     Json @map("type_data")
+
+  activatedAt   DateTime? @map("activated_at")
+  closedAt      DateTime? @map("closed_at")
+  closureNotes  String?   @map("closure_notes")
+  verifiedAt    DateTime? @map("verified_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  requester User       @relation("PermitRequester", fields: [requesterId], references: [id], onDelete: Restrict)
+  plant     Plant      @relation(fields: [plantId], references: [id], onDelete: Restrict)
+  area      Area       @relation(fields: [areaId], references: [id], onDelete: Restrict)
+  equipment Equipment? @relation(fields: [equipmentId], references: [id], onDelete: SetNull)
+
+  approvals PermitApproval[]
+  auditLogs AuditLog[]
+
+  @@index([status, plannedEnd])
+  @@index([areaId, status])
+  @@index([requesterId, status])
+  @@index([plantId, status])
+  @@index([type])
+  @@map("permits")
+}
+
+model PermitApproval {
+  id         String           @id @default(uuid())
+  permitId   String           @map("permit_id")
+  role       ApprovalRole
+  decision   ApprovalDecision @default(PENDING)
+  approverId String?          @map("approver_id")
+  comment    String?
+  decidedAt  DateTime?        @map("decided_at")
+  createdAt  DateTime         @default(now()) @map("created_at")
+  updatedAt  DateTime         @updatedAt @map("updated_at")
+
+  permit   Permit @relation(fields: [permitId], references: [id], onDelete: Cascade)
+  approver User?  @relation(fields: [approverId], references: [id], onDelete: Restrict)
+
+  @@unique([permitId, role])
+  @@index([approverId])
+  @@index([decision])
+  @@map("permit_approvals")
+}
+
+model AuditLog {
+  id         String        @id @default(uuid())
+  permitId   String        @map("permit_id")
+  actorId    String?       @map("actor_id")
+  event      AuditEvent
+  fromStatus PermitStatus? @map("from_status")
+  toStatus   PermitStatus? @map("to_status")
+  reason     String?
+  metadata   Json
+  createdAt  DateTime      @default(now()) @map("created_at")
+
+  permit Permit @relation(fields: [permitId], references: [id], onDelete: Cascade)
+  actor  User?  @relation(fields: [actorId], references: [id], onDelete: Restrict)
+
+  @@index([permitId, createdAt])
+  @@index([actorId])
+  @@map("audit_logs")
+}
