@@ -6,6 +6,7 @@ import { useAuthStore } from '../../store'
 import { StatusBadge, AuditTimeline, ApprovalTrailCard, TypeDataCard, ActionModal } from '.'
 import { Permit, PermitStatus, ReadinessCheck, User } from '../../types'
 import { format, differenceInSeconds } from 'date-fns'
+import { QRCodeSVG } from 'qrcode.react'
 
 const PERMIT_TYPE_LABELS: Record<string, string> = {
   HOT_WORK: 'Hot Work',
@@ -292,6 +293,24 @@ export default function PermitDetailPage() {
           </div>
         </div>
         <StatusBadge status={permit.status} size="lg" />
+      </div>
+
+      {/* QR Code */}
+      <div className="flex flex-wrap items-center gap-6 mb-6 bg-white rounded-xl shadow-sm border border-gray-200 p-4">
+        <div className="flex flex-col items-center gap-2">
+          <QRCodeSVG
+            value={`${window.location.origin}/permits/${permit.id}`}
+            size={128}
+            level="M"
+            bgColor="#ffffff"
+            fgColor="#1f2937"
+          />
+          <span className="text-xs text-gray-400">Scan for permit status</span>
+        </div>
+        <div className="text-sm text-gray-500">
+          <p>This QR code links to the live permit detail page.</p>
+          <p className="mt-1">Access requires authentication.</p>
+        </div>
       </div>
 
       {/* Expiring Soon Banner */}
