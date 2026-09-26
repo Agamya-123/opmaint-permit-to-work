@@ -1,8 +1,7 @@
 import { useState, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation } from '@tanstack/react-query'
-import { useAuth } from '../hooks/useAuth'
-import { Permit, PermitType, PermitStatus } from '../types/permit'
+import { useAuthStore } from '../store'
 import { Field, TextInput, NumberInput, Select, TextArea, DateTimeInput, Checkbox } from '../components/permits/Field'
 import { TYPE_CONFIG, PermitTypeKey } from '../components/permits/typeConfig'
 import { ChevronLeft, ChevronRight, Check, AlertCircle, FileText, Shield, Clock, User } from 'lucide-react'
@@ -72,7 +71,7 @@ const emptyForm: FormData = {
 }
 
 export default function CreatePermitPage() {
-  const { user } = useAuth()
+  const { user } = useAuthStore((state) => ({ user: state.user }))
   const navigate = useNavigate()
   const [step, setStep] = useState(1)
   const [form, setForm] = useState<FormData>(emptyForm)
@@ -415,7 +414,7 @@ export default function CreatePermitPage() {
                     )}
                     {f.type === 'number' && (
                       <NumberInput
-                        value={val ?? ''}
+                        value={typeof val === 'number' || typeof val === 'string' ? val : ''}
                         onChange={(v) => setForm(prev => ({ ...prev, typeData: { ...prev.typeData, [f.id]: v } }))}
                         error={err}
                       />

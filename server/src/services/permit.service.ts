@@ -727,13 +727,19 @@ export async function getPermit(permitId: string) {
   const permit = await prisma.permit.findUnique({
     where: { id: permitId },
     include: {
-      requester: { select: { id: true, name: true, email: true } },
+      requester: { select: { id: true, name: true, email: true, role: true } },
       area: { include: { plant: true } },
       equipment: true,
       approvals: {
         include: {
-          approver: { select: { id: true, name: true, email: true } },
+          approver: { select: { id: true, name: true, email: true, role: true } },
         },
+      },
+      auditLogs: {
+        include: {
+          actor: { select: { id: true, name: true, email: true, role: true } },
+        },
+        orderBy: { createdAt: 'desc' },
       },
     },
   });
