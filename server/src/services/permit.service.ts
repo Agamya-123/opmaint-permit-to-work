@@ -15,9 +15,11 @@ import {
 } from '../domain/permit';
 
 import { prisma } from '../lib/prisma';
+import { processExpiredPermits } from './expiry.service';
 
 /** Load a permit and verify it exists – rethrows NotFound if missing. */
 async function loadPermit(permitId: string): Promise<PermitSnapshot> {
+  await processExpiredPermits();
   const permit = await prisma.permit.findUnique({
     where: { id: permitId },
     include: { approvals: true },
@@ -128,6 +130,7 @@ export async function approvePermit(
   approverId: string,
   reason?: string,
 ): Promise<{ permitId: string; toStatus: PermitStatus; event: string }> {
+  await processExpiredPermits();
   const permit = await prisma.permit.findUnique({
     where: { id: permitId },
     include: { approvals: true },
@@ -252,6 +255,7 @@ export async function rejectPermit(
   approverId: string,
   reason: string,
 ): Promise<{ permitId: string; toStatus: PermitStatus; event: string }> {
+  await processExpiredPermits();
   const permit = await prisma.permit.findUnique({
     where: { id: permitId },
   });
@@ -368,6 +372,7 @@ export async function activatePermit(
   permitId: string,
   activatorId: string,
 ): Promise<{ permitId: string; toStatus: PermitStatus; event: string }> {
+  await processExpiredPermits();
   // Load with approvals check
   const permit = await prisma.permit.findUnique({
     where: { id: permitId },
@@ -839,6 +844,7 @@ export async function getPermits({
   page?: string;
   limit?: string;
 }) {
+  await processExpiredPermits();
   const where = buildPermitFilter({
     status,
     type,
@@ -883,6 +889,7 @@ export async function getPermits({
 }
 
 export async function getPermit(permitId: string) {
+  await processExpiredPermits();
   const permit = await prisma.permit.findUnique({
     where: { id: permitId },
     include: {
@@ -1026,6 +1033,7 @@ export async function updatePermit(permitId: string, data: any, requesterId: str
 }
 
 export async function logWork(permitId: string, actorId: string, notes: string, hours?: number) {
+  await processExpiredPermits();
   const permit = await prisma.permit.findUnique({ where: { id: permitId } });
 
   if (!permit) {
