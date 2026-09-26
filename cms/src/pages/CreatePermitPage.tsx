@@ -2,6 +2,7 @@ import { useState, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation } from '@tanstack/react-query'
 import { useAuthStore } from '../store'
+import { api } from '../api'
 import { Field, TextInput, NumberInput, Select, TextArea, DateTimeInput, Checkbox } from '../components/permits/Field'
 import { TYPE_CONFIG, PermitTypeKey } from '../components/permits/typeConfig'
 import { ChevronLeft, ChevronRight, Check, AlertCircle, FileText, Shield, Clock, User } from 'lucide-react'
@@ -81,41 +82,33 @@ export default function CreatePermitPage() {
   const { data: plants } = useQuery({
     queryKey: ['plants'],
     queryFn: async () => {
-      const res = await fetch('/api/plants', { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } })
-      return res.json()
+      const res = await api.get('/master-data/plants')
+      return res.data
     }
   })
 
   const { data: areas } = useQuery({
     queryKey: ['areas', form.plantId],
     queryFn: async () => {
-      const params = form.plantId ? `?plantId=${form.plantId}` : ''
-      const res = await fetch(`/api/areas${params}`, { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } })
-      return res.json()
+      const params = form.plantId ? { plantId: form.plantId } : {}
+      const res = await api.get('/master-data/areas', { params })
+      return res.data
     }
   })
 
   const { data: equipment } = useQuery({
     queryKey: ['equipment', form.areaId],
     queryFn: async () => {
-      const params = form.areaId ? `?areaId=${form.areaId}` : ''
-      const res = await fetch(`/api/equipment${params}`, { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } })
-      return res.json()
+      const params = form.areaId ? { areaId: form.areaId } : {}
+      const res = await api.get('/master-data/equipment', { params })
+      return res.data
     }
   })
 
   const createMutation = useMutation({
     mutationFn: async (payload: any) => {
-      const res = await fetch('/api/permits', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('token')}` },
-        body: JSON.stringify(payload),
-      })
-      if (!res.ok) {
-        const err = await res.json()
-        throw new Error(err.message || 'Failed to create permit')
-      }
-      return res.json()
+      const res = await api.post('/permits', payload)
+      return res.data
     },
     onSuccess: (permit) => {
       navigate(`/permits/${permit.id}`)
@@ -124,16 +117,8 @@ export default function CreatePermitPage() {
 
   const submitMutation = useMutation({
     mutationFn: async (permitId: string) => {
-      const res = await fetch(`/api/permits/${permitId}/action`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('token')}` },
-        body: JSON.stringify({ action: 'SUBMIT' }),
-      })
-      if (!res.ok) {
-        const err = await res.json()
-        throw new Error(err.message || 'Failed to submit permit')
-      }
-      return res.json()
+      const res = await api.post(`/permits/${permitId}/action`, { action: 'SUBMIT' })
+      return res.data
     }
   })
 
