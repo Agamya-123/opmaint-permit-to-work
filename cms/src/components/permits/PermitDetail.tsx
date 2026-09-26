@@ -304,6 +304,7 @@ export default function PermitDetailPage() {
             level="M"
             bgColor="#ffffff"
             fgColor="#1f2937"
+            includeMargin={false}
           />
           <span className="text-xs text-gray-400">Scan for permit status</span>
         </div>

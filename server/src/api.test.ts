@@ -468,7 +468,7 @@ describe('Opmaint PTW REST API Integration Tests', () => {
       expect(res.body.warnings).toBeDefined();
       expect(res.body.warnings.length).toBeGreaterThanOrEqual(1);
 
-      const warning = res.body.warnings.find((w: any) => w.code === 'HOT_WORK_CONFINED_SPACE_OVERLAP');
+      const warning = res.body.warnings.find((w: any) => w.code === 'HOT_WORK_CONFINED_SPACE_OVERLAP' && w.conflictingPermit.id === confinedPermitId);
       expect(warning).toBeDefined();
       expect(warning.severity).toBe('CRITICAL');
       expect(warning.conflictingPermit.id).toBe(confinedPermitId);

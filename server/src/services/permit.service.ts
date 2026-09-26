@@ -1072,7 +1072,6 @@ export async function updatePermit(permitId: string, data: any, requesterId: str
     where: { id: permitId },
     data: sanitized,
   });
-  });
 
   return { ...updatedPermit, warnings: conflicts };
 }
