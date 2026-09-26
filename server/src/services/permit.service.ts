@@ -61,8 +61,8 @@ function buildPermitFilter({ status, type, plantId, areaId, startDate, endDate, 
   }
 
   // Pending approvals for the currently authenticated requester
-  if (pendingMyApproval) {
-    where.requesterId = pendingMyApproval; // will be injected by the controller / middleware
+  if (pendingMyApproval && typeof pendingMyApproval === 'string' && pendingMyApproval.length === 36) {
+    where.requesterId = pendingMyApproval; // injected by middleware / controller
     where.status = 'PENDING_APPROVAL';
   }
 
@@ -466,6 +466,10 @@ export async function suspendPermit(
   reason: string,
 ): Promise<{ permitId: string; toStatus: PermitStatus; event: string }> {
   const snapshot = await loadPermit(permitId);
+  const suspender = await prisma.user.findUnique({ where: { id: suspenderId } });
+  if (!suspender || (suspender.role !== 'SAFETY_OFFICER' && suspender.role !== 'ADMIN')) {
+    throw new PermitDomainError('UNAUTHORIZED', 'Only Safety Officer or Admin can suspend');
+  }
 
   if (snapshot.status !== 'ACTIVE') {
     throw new PermitDomainError(
@@ -510,6 +514,10 @@ export async function resumePermit(
   resumerId: string,
 ): Promise<{ permitId: string; toStatus: PermitStatus; event: string }> {
   const snapshot = await loadPermit(permitId);
+  const resumer = await prisma.user.findUnique({ where: { id: resumerId } });
+  if (!resumer || (resumer.role !== 'SAFETY_OFFICER' && resumer.role !== 'ADMIN')) {
+    throw new PermitDomainError('UNAUTHORIZED', 'Only Safety Officer or Admin can resume');
+  }
 
   if (snapshot.status !== 'SUSPENDED') {
     throw new PermitDomainError(
@@ -731,6 +739,17 @@ export async function cancelPermit(
   reason: string,
 ): Promise<{ permitId: string; toStatus: PermitStatus; event: string }> {
   const snapshot = await loadPermit(permitId);
+  const permit = await prisma.permit.findUnique({ where: { id: permitId } });
+  if (!permit) throw new PrismaClientKnownRequestError('Not found', { code: 'P2025', clientVersion: '', meta: {} });
+
+  // Authorization: only requester or admin can cancel; not on terminal states
+  const canceller = await prisma.user.findUnique({ where: { id: cancellerId } });
+  if (!canceller) throw new PermitDomainError('UNAUTHORIZED', 'User not found');
+  const isRequester = permit.requesterId === cancellerId;
+  const isAdmin = canceller.role === 'ADMIN';
+  if (!isRequester && !isAdmin) {
+    throw new PermitDomainError('UNAUTHORIZED', 'Only requester or admin can cancel');
+  }
 
   if (snapshot.status === 'EXPIRED' || snapshot.status === 'CLOSED_VERIFIED') {
     throw new PermitDomainError(
@@ -1040,12 +1059,19 @@ export async function updatePermit(permitId: string, data: any, requesterId: str
     throw new PermitDomainError('INVALID_TRANSITION', 'Only the original requester can update this draft.');
   }
 
-  const updatedPermitData = { ...permit, ...data };
+  const allowedFields = ['workDescription', 'plannedStart', 'plannedEnd', 'contractorTeam', 'hazards', 'ppe', 'precautions', 'typeData', 'equipmentId'];
+  const sanitized: any = {};
+  for (const k of allowedFields) {
+    if (k in data) sanitized[k] = data[k];
+  }
+
+  const updatedPermitData = { ...permit, ...sanitized };
   const conflicts = await detectPermitConflicts(updatedPermitData);
 
   const updatedPermit = await prisma.permit.update({
     where: { id: permitId },
-    data,
+    data: sanitized,
+  });
   });
 
   return { ...updatedPermit, warnings: conflicts };
