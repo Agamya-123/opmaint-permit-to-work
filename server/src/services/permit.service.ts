@@ -171,6 +171,20 @@ export async function approvePermit(
     approvalRole = 'SAFETY_OFFICER';
   } else if (approver.role === 'AREA_OWNER') {
     approvalRole = 'AREA_OWNER';
+    const isOwner = await prisma.areaOwner.findUnique({
+      where: {
+        areaId_userId: {
+          areaId: permit.areaId,
+          userId: approverId,
+        },
+      },
+    });
+    if (!isOwner) {
+      const err: any = new Error('Area Owner can only approve permits within their assigned area');
+      err.code = 'AREA_MISMATCH';
+      err.httpStatus = 403;
+      throw err;
+    }
   }
 
   let finalStatus: PermitStatus = 'PENDING_APPROVAL';
@@ -238,30 +252,102 @@ export async function rejectPermit(
   approverId: string,
   reason: string,
 ): Promise<{ permitId: string; toStatus: PermitStatus; event: string }> {
-  const snapshot = await loadPermit(permitId);
+  const permit = await prisma.permit.findUnique({
+    where: { id: permitId },
+  });
 
-  if (snapshot.status !== 'PENDING_APPROVAL') {
+  if (!permit) {
+    throw new PrismaClientKnownRequestError('Permit not found', {
+      code: 'P2025',
+      clientVersion: '',
+      meta: { model: 'Permit' },
+    });
+  }
+
+  if (permit.status !== 'PENDING_APPROVAL') {
     throw new PermitDomainError(
       'INVALID_TRANSITION',
-      `Cannot reject permit in ${snapshot.status} status`,
+      `Cannot reject permit in ${permit.status} status`,
     );
+  }
+
+  if (permit.requesterId === approverId) {
+    const err: any = new Error('Requester cannot reject their own permit');
+    err.code = 'SELF_APPROVAL_NOT_ALLOWED';
+    err.httpStatus = 403;
+    throw err;
+  }
+
+  const approver = await prisma.user.findUnique({
+    where: { id: approverId },
+  });
+
+  if (!approver) {
+    const err: any = new Error('Approver user not found');
+    err.code = 'UNAUTHORIZED';
+    err.httpStatus = 403;
+    throw err;
+  }
+
+  let approvalRole: ApprovalRole = 'AREA_OWNER';
+  if (approver.role === 'SAFETY_OFFICER' || approver.role === 'ADMIN') {
+    approvalRole = 'SAFETY_OFFICER';
+  } else if (approver.role === 'AREA_OWNER') {
+    approvalRole = 'AREA_OWNER';
+    const isOwner = await prisma.areaOwner.findUnique({
+      where: {
+        areaId_userId: {
+          areaId: permit.areaId,
+          userId: approverId,
+        },
+      },
+    });
+    if (!isOwner) {
+      const err: any = new Error('Area Owner can only reject permits within their assigned area');
+      err.code = 'AREA_MISMATCH';
+      err.httpStatus = 403;
+      throw err;
+    }
   }
 
   const result = transition(
     {
-      status: snapshot.status,
-      plannedStart: snapshot.plannedStart,
-      plannedEnd: snapshot.plannedEnd,
+      status: permit.status,
+      plannedStart: permit.plannedStart,
+      plannedEnd: permit.plannedEnd,
       allRequiredApprovalsGranted: false,
     },
     { action: 'REJECT', now: new Date(), reason },
   );
 
   await prisma.$transaction(async (tx) => {
+    await tx.permitApproval.upsert({
+      where: {
+        permitId_role: {
+          permitId,
+          role: approvalRole,
+        },
+      },
+      create: {
+        permitId,
+        role: approvalRole,
+        approverId,
+        decision: 'REJECTED',
+        comment: reason,
+      },
+      update: {
+        approverId,
+        decision: 'REJECTED',
+        comment: reason,
+        decidedAt: new Date(),
+      },
+    });
+
     await tx.permit.update({
       where: { id: permitId },
       data: { status: result.to },
     });
+
     await tx.auditLog.create({
       data: {
         permitId,
@@ -270,7 +356,7 @@ export async function rejectPermit(
         fromStatus: result.from,
         toStatus: result.to,
         reason,
-        metadata: {},
+        metadata: { role: approvalRole },
       },
     });
   });

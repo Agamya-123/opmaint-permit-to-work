@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 
 interface ActionModalProps {
   isOpen: boolean
@@ -6,6 +6,8 @@ interface ActionModalProps {
   actionName: string
   requireReason?: boolean
   reasonLabel?: string
+  requireConfirmation?: boolean
+  confirmationText?: string
   isWorkLog?: boolean
   onClose: () => void
   onSubmit: (data: { reason?: string; notes?: string; hoursLogged?: number }) => Promise<void>
@@ -17,6 +19,8 @@ export function ActionModal({
   actionName,
   requireReason = true,
   reasonLabel = 'Reason / Comments',
+  requireConfirmation = false,
+  confirmationText = 'I confirm that I have thoroughly reviewed all permit safety details, hazards, PPE, precautions, and equipment isolation requirements before taking this action.',
   isWorkLog = false,
   onClose,
   onSubmit,
@@ -24,14 +28,30 @@ export function ActionModal({
   const [reason, setReason] = useState('')
   const [notes, setNotes] = useState('')
   const [hoursLogged, setHoursLogged] = useState<number | string>(1)
+  const [confirmed, setConfirmed] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+
+  useEffect(() => {
+    if (isOpen) {
+      setReason('')
+      setNotes('')
+      setHoursLogged(1)
+      setConfirmed(false)
+      setError('')
+    }
+  }, [isOpen])
 
   if (!isOpen) return null
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError('')
+
+    if (requireConfirmation && !confirmed) {
+      setError('You must confirm that you have reviewed all safety details before approving.')
+      return
+    }
 
     if (isWorkLog) {
       if (!notes.trim()) {
@@ -125,6 +145,22 @@ export function ActionModal({
             </div>
           )}
 
+          {requireConfirmation && (
+            <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg">
+              <label className="flex items-start gap-2.5 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={confirmed}
+                  onChange={(e) => setConfirmed(e.target.checked)}
+                  className="mt-0.5 h-4 w-4 rounded text-brand-600 focus:ring-brand-500 border-gray-300"
+                />
+                <span className="text-xs font-medium text-amber-900 leading-snug">
+                  {confirmationText}
+                </span>
+              </label>
+            </div>
+          )}
+
           <div className="flex items-center justify-end gap-3 pt-3 border-t border-gray-100">
             <button
               type="button"
@@ -136,7 +172,7 @@ export function ActionModal({
             </button>
             <button
               type="submit"
-              disabled={loading}
+              disabled={loading || (requireConfirmation && !confirmed)}
               className="px-4 py-2 text-sm font-semibold text-white bg-brand-600 rounded-lg hover:bg-brand-700 disabled:opacity-50 transition-colors"
             >
               {loading ? 'Processing...' : actionName}

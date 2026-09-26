@@ -24,6 +24,8 @@ export interface User {
   email: string
   role: Role
   department?: string
+  plantId?: string | null
+  ownedAreas?: Array<{ areaId: string; area?: Area }>
 }
 
 export interface Plant {

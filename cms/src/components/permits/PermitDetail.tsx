@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../api'
 import { useAuthStore } from '../../store'
 import { StatusBadge, AuditTimeline, ApprovalTrailCard, TypeDataCard, ActionModal } from '.'
-import { Permit, PermitStatus, ReadinessCheck } from '../../types'
+import { Permit, PermitStatus, ReadinessCheck, User } from '../../types'
 import { format, differenceInSeconds } from 'date-fns'
 
 const PERMIT_TYPE_LABELS: Record<string, string> = {
@@ -52,68 +52,78 @@ interface PermitAction {
   label: string
   confirmLabel: string
   requireReason: boolean
+  requireConfirmation?: boolean
   isWorkLog: boolean
 }
 
 // Compute available actions based on current user + permit state
 function computeAvailableActions(
   permit: Permit,
-  currentUserId: string | undefined,
-  currentUserRole: string | undefined,
+  user: User | null,
 ): PermitAction[] {
   const actions: PermitAction[] = []
   const status: PermitStatus = permit.status
+  const currentUserId = user?.id
+  const currentUserRole = user?.role
   const isRequester = permit.requesterId === currentUserId
 
   const hasAreaOwnerApproved = permit.approvals.some((a) => a.role === 'AREA_OWNER' && a.decision === 'APPROVED')
   const hasSafetyApproved = permit.approvals.some((a) => a.role === 'SAFETY_OFFICER' && a.decision === 'APPROVED')
 
+  // Check if current user owns this permit's area (if ownedAreas list is present)
+  const isAreaOwnerForThisArea = currentUserRole === 'AREA_OWNER' && (
+    !user?.ownedAreas || user.ownedAreas.length === 0 || user.ownedAreas.some((oa: { areaId: string }) => oa.areaId === permit.areaId)
+  )
+
   if (status === 'DRAFT' && isRequester) {
-    actions.push({ id: 'SUBMIT', label: 'Submit for Approval', confirmLabel: 'Submit', requireReason: false, isWorkLog: false })
+    actions.push({ id: 'SUBMIT', label: 'Submit for Approval', confirmLabel: 'Submit', requireReason: false, requireConfirmation: false, isWorkLog: false })
   }
 
   if (status === 'PENDING_APPROVAL') {
-    if (currentUserRole === 'AREA_OWNER' && !hasAreaOwnerApproved) {
-      actions.push({ id: 'APPROVE_AREA', label: 'Approve (Area Owner)', confirmLabel: 'Approve', requireReason: true, isWorkLog: false })
-      actions.push({ id: 'REJECT_AREA', label: 'Reject', confirmLabel: 'Reject', requireReason: true, isWorkLog: false })
-    }
-    if (currentUserRole === 'SAFETY_OFFICER' && !hasSafetyApproved) {
-      actions.push({ id: 'APPROVE_SAFETY', label: 'Approve (Safety Officer)', confirmLabel: 'Approve', requireReason: true, isWorkLog: false })
-      actions.push({ id: 'REJECT_SAFETY', label: 'Reject', confirmLabel: 'Reject', requireReason: true, isWorkLog: false })
-    }
-    if (currentUserRole === 'ADMIN') {
-      actions.push(
-        { id: 'APPROVE_ADMIN', label: 'Approve (Admin Override)', confirmLabel: 'Approve', requireReason: true, isWorkLog: false },
-        { id: 'REJECT_ADMIN', label: 'Reject (Admin Override)', confirmLabel: 'Reject', requireReason: true, isWorkLog: false }
-      )
+    // Rule: Requester cannot approve their own permit!
+    if (!isRequester) {
+      if (currentUserRole === 'AREA_OWNER' && isAreaOwnerForThisArea && !hasAreaOwnerApproved) {
+        actions.push({ id: 'APPROVE_AREA', label: 'Approve (Area Owner)', confirmLabel: 'Approve', requireReason: false, requireConfirmation: true, isWorkLog: false })
+        actions.push({ id: 'REJECT_AREA', label: 'Reject', confirmLabel: 'Reject', requireReason: true, requireConfirmation: false, isWorkLog: false })
+      }
+      if (currentUserRole === 'SAFETY_OFFICER' && !hasSafetyApproved) {
+        actions.push({ id: 'APPROVE_SAFETY', label: 'Approve (Safety Officer)', confirmLabel: 'Approve', requireReason: false, requireConfirmation: true, isWorkLog: false })
+        actions.push({ id: 'REJECT_SAFETY', label: 'Reject', confirmLabel: 'Reject', requireReason: true, requireConfirmation: false, isWorkLog: false })
+      }
+      if (currentUserRole === 'ADMIN') {
+        actions.push(
+          { id: 'APPROVE_ADMIN', label: 'Approve (Admin Override)', confirmLabel: 'Approve', requireReason: false, requireConfirmation: true, isWorkLog: false },
+          { id: 'REJECT_ADMIN', label: 'Reject (Admin Override)', confirmLabel: 'Reject', requireReason: true, requireConfirmation: false, isWorkLog: false }
+        )
+      }
     }
   }
 
   if (status === 'APPROVED' && (isRequester || currentUserRole === 'ADMIN')) {
-    actions.push({ id: 'ACTIVATE', label: 'Activate Permit', confirmLabel: 'Activate', requireReason: false, isWorkLog: false })
+    actions.push({ id: 'ACTIVATE', label: 'Activate Permit', confirmLabel: 'Activate', requireReason: false, requireConfirmation: false, isWorkLog: false })
   }
 
   if (status === 'ACTIVE' && (isRequester || currentUserRole === 'AREA_OWNER' || currentUserRole === 'ADMIN')) {
-    actions.push({ id: 'SUSPEND', label: 'Suspend Work', confirmLabel: 'Suspend', requireReason: true, isWorkLog: false })
-    actions.push({ id: 'CLOSE', label: 'Close Permit', confirmLabel: 'Close', requireReason: true, isWorkLog: false })
+    actions.push({ id: 'SUSPEND', label: 'Suspend Work', confirmLabel: 'Suspend', requireReason: true, requireConfirmation: false, isWorkLog: false })
+    actions.push({ id: 'CLOSE', label: 'Close Permit', confirmLabel: 'Close', requireReason: true, requireConfirmation: false, isWorkLog: false })
   }
 
   if (status === 'SUSPENDED' && (isRequester || currentUserRole === 'AREA_OWNER' || currentUserRole === 'ADMIN')) {
-    actions.push({ id: 'RESUME', label: 'Resume Work', confirmLabel: 'Resume', requireReason: true, isWorkLog: false })
+    actions.push({ id: 'RESUME', label: 'Resume Work', confirmLabel: 'Resume', requireReason: true, requireConfirmation: false, isWorkLog: false })
   }
 
   if (status === 'CLOSED' && currentUserRole === 'SAFETY_OFFICER' && !permit.verifiedAt) {
-    actions.push({ id: 'VERIFY_CLOSURE', label: 'Verify Closure', confirmLabel: 'Verify Closure', requireReason: true, isWorkLog: false })
+    actions.push({ id: 'VERIFY_CLOSURE', label: 'Verify Closure', confirmLabel: 'Verify Closure', requireReason: true, requireConfirmation: false, isWorkLog: false })
   }
 
   // Work logging available for ACTIVE permits (requester, technician, contractor, area owner, safety officer, admin)
   if (status === 'ACTIVE' && (isRequester || currentUserRole === 'TECHNICIAN' || currentUserRole === 'CONTRACTOR' || currentUserRole === 'AREA_OWNER' || currentUserRole === 'SAFETY_OFFICER' || currentUserRole === 'ADMIN')) {
-    actions.push({ id: 'LOG_WORK', label: 'Log Work Progress', confirmLabel: 'Log Work', requireReason: false, isWorkLog: true })
+    actions.push({ id: 'LOG_WORK', label: 'Log Work Progress', confirmLabel: 'Log Work', requireReason: false, requireConfirmation: false, isWorkLog: true })
   }
 
   // Cancellation available from non-terminal statuses
   if (!['CLOSED_VERIFIED', 'CANCELLED', 'EXPIRED', 'REJECTED'].includes(status) && (isRequester || currentUserRole === 'ADMIN')) {
-    actions.push({ id: 'CANCEL', label: 'Cancel Permit', confirmLabel: 'Cancel', requireReason: true, isWorkLog: false })
+    actions.push({ id: 'CANCEL', label: 'Cancel Permit', confirmLabel: 'Cancel', requireReason: true, requireConfirmation: false, isWorkLog: false })
   }
 
   return actions
@@ -212,21 +222,21 @@ export default function PermitDetailPage() {
 
   const getActionConfig = (actionId: string | null) => {
     switch (actionId) {
-      case 'SUBMIT': return { title: 'Submit for Approval', actionName: 'Submit', requireReason: false }
+      case 'SUBMIT': return { title: 'Submit for Approval', actionName: 'Submit', requireReason: false, requireConfirmation: false }
       case 'APPROVE_AREA':
       case 'APPROVE_SAFETY':
-      case 'APPROVE_ADMIN': return { title: 'Approve Permit', actionName: 'Approve', requireReason: true }
+      case 'APPROVE_ADMIN': return { title: 'Approve Permit', actionName: 'Approve', requireReason: false, requireConfirmation: true }
       case 'REJECT_AREA':
       case 'REJECT_SAFETY':
-      case 'REJECT_ADMIN': return { title: 'Reject Permit', actionName: 'Reject', requireReason: true }
-      case 'ACTIVATE': return { title: 'Activate Permit', actionName: 'Activate', requireReason: false }
-      case 'SUSPEND': return { title: 'Suspend Permit', actionName: 'Suspend', requireReason: true }
-      case 'RESUME': return { title: 'Resume Permit', actionName: 'Resume', requireReason: true }
-      case 'CLOSE': return { title: 'Close Permit', actionName: 'Close Permit', requireReason: true }
-      case 'VERIFY_CLOSURE': return { title: 'Verify Closure', actionName: 'Verify Closure', requireReason: true }
-      case 'CANCEL': return { title: 'Cancel Permit', actionName: 'Cancel', requireReason: true }
-      case 'LOG_WORK': return { title: 'Log Work Progress', actionName: 'Log Work', isWorkLog: true, requireReason: false }
-      default: return { title: '', actionName: 'Submit', requireReason: false }
+      case 'REJECT_ADMIN': return { title: 'Reject Permit', actionName: 'Reject', requireReason: true, requireConfirmation: false }
+      case 'ACTIVATE': return { title: 'Activate Permit', actionName: 'Activate', requireReason: false, requireConfirmation: false }
+      case 'SUSPEND': return { title: 'Suspend Permit', actionName: 'Suspend', requireReason: true, requireConfirmation: false }
+      case 'RESUME': return { title: 'Resume Permit', actionName: 'Resume', requireReason: true, requireConfirmation: false }
+      case 'CLOSE': return { title: 'Close Permit', actionName: 'Close Permit', requireReason: true, requireConfirmation: false }
+      case 'VERIFY_CLOSURE': return { title: 'Verify Closure', actionName: 'Verify Closure', requireReason: true, requireConfirmation: false }
+      case 'CANCEL': return { title: 'Cancel Permit', actionName: 'Cancel', requireReason: true, requireConfirmation: false }
+      case 'LOG_WORK': return { title: 'Log Work Progress', actionName: 'Log Work', isWorkLog: true, requireReason: false, requireConfirmation: false }
+      default: return { title: '', actionName: 'Submit', requireReason: false, requireConfirmation: false }
     }
   }
 
@@ -260,7 +270,7 @@ export default function PermitDetailPage() {
     )
   }
 
-  const availableActions = computeAvailableActions(permit, user?.id, user?.role)
+  const availableActions = computeAvailableActions(permit, user)
   const actionConfig = getActionConfig(actionModal.actionId)
 
   return (
@@ -295,6 +305,59 @@ export default function PermitDetailPage() {
               {Math.floor(timeRemaining! / 60)} minutes. Take immediate action.
             </span>
           </div>
+        </div>
+      )}
+
+      {/* Pending Approval Banner */}
+      {permit.status === 'PENDING_APPROVAL' && (
+        <div className="mb-6 p-4 bg-amber-50 border border-amber-200 rounded-xl flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-xs">
+          <div className="flex items-start gap-3">
+            <span className="text-2xl">⏳</span>
+            <div>
+              <h3 className="font-bold text-amber-900">
+                {availableActions.some((a) => a.id.startsWith('APPROVE'))
+                  ? 'Your Review & Approval is Required'
+                  : 'Permit is Awaiting Approval Decisions'}
+              </h3>
+              <p className="text-xs text-amber-800 mt-1">
+                This permit requires dual sign-off from both the Area Owner and Safety Officer before work can be activated.
+              </p>
+              <div className="flex items-center gap-4 mt-2 text-xs font-medium text-amber-900">
+                <span className="flex items-center gap-1.5">
+                  {permit.approvals.some((a) => a.role === 'AREA_OWNER' && a.decision === 'APPROVED') ? '✅' : '⏳'} Area Owner Sign-off
+                </span>
+                <span className="flex items-center gap-1.5">
+                  {permit.approvals.some((a) => a.role === 'SAFETY_OFFICER' && a.decision === 'APPROVED') ? '✅' : '⏳'} Safety Officer Sign-off
+                </span>
+              </div>
+            </div>
+          </div>
+          {availableActions.some((a) => a.id.startsWith('APPROVE')) && (
+            <div className="flex items-center gap-2 shrink-0">
+              {availableActions
+                .filter((a) => a.id.startsWith('REJECT'))
+                .map((action) => (
+                  <button
+                    key={action.id}
+                    onClick={() => handleActionClick(action.id)}
+                    className="px-3.5 py-2 text-xs font-semibold text-red-700 bg-red-100 hover:bg-red-200 rounded-lg transition-colors"
+                  >
+                    Reject
+                  </button>
+                ))}
+              {availableActions
+                .filter((a) => a.id.startsWith('APPROVE'))
+                .map((action) => (
+                  <button
+                    key={action.id}
+                    onClick={() => handleActionClick(action.id)}
+                    className="px-3.5 py-2 text-xs font-semibold text-white bg-green-600 hover:bg-green-700 rounded-lg shadow-xs transition-colors"
+                  >
+                    Approve Permit
+                  </button>
+                ))}
+            </div>
+          )}
         </div>
       )}
 
