@@ -16,6 +16,7 @@ import {
 
 import { prisma } from '../lib/prisma';
 import { processExpiredPermits } from './expiry.service';
+import { detectPermitConflicts } from './conflict.service';
 
 /** Load a permit and verify it exists – rethrows NotFound if missing. */
 async function loadPermit(permitId: string): Promise<PermitSnapshot> {
@@ -83,7 +84,16 @@ function buildPermitFilter({ status, type, plantId, areaId, startDate, endDate, 
 export async function submitPermit(
   permitId: string,
   requesterId: string,
-): Promise<{ permitId: string; toStatus: PermitStatus; event: string }> {
+): Promise<{ permitId: string; toStatus: PermitStatus; event: string; warnings: any[] }> {
+  const permit = await prisma.permit.findUnique({ where: { id: permitId } });
+  if (!permit) {
+    throw new PrismaClientKnownRequestError('Permit not found', {
+      code: 'P2025',
+      clientVersion: '',
+      meta: { model: 'Permit' },
+    });
+  }
+
   const snapshot = await loadPermit(permitId);
 
   // Only the requester can submit their own permit
@@ -93,6 +103,8 @@ export async function submitPermit(
       `Permit is in ${snapshot.status} status, cannot submit`,
     );
   }
+
+  const conflicts = await detectPermitConflicts(permit);
 
   const result = transition(
     {
@@ -117,12 +129,12 @@ export async function submitPermit(
         event: result.event,
         fromStatus: result.from,
         toStatus: result.to,
-        metadata: {},
+        metadata: conflicts.length > 0 ? { conflicts } : {},
       },
     });
   });
 
-  return { permitId, toStatus: result.to, event: result.event };
+  return { permitId, toStatus: result.to, event: result.event, warnings: conflicts };
 }
 
 export async function approvePermit(
@@ -983,6 +995,8 @@ export async function checkActivationReadiness(
 export async function createPermit(data: any, requesterId: string) {
   const permitNumber = `PTW-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
 
+  const conflicts = await detectPermitConflicts(data);
+
   return prisma.$transaction(async (tx) => {
     const permit = await tx.permit.create({
       data: {
@@ -999,11 +1013,11 @@ export async function createPermit(data: any, requesterId: string) {
         actorId: requesterId,
         event: AuditEvent.CREATED,
         toStatus: 'DRAFT',
-        metadata: {},
+        metadata: conflicts.length > 0 ? { conflicts } : {},
       },
     });
 
-    return permit;
+    return { ...permit, warnings: conflicts };
   });
 }
 
@@ -1026,10 +1040,15 @@ export async function updatePermit(permitId: string, data: any, requesterId: str
     throw new PermitDomainError('INVALID_TRANSITION', 'Only the original requester can update this draft.');
   }
 
-  return prisma.permit.update({
+  const updatedPermitData = { ...permit, ...data };
+  const conflicts = await detectPermitConflicts(updatedPermitData);
+
+  const updatedPermit = await prisma.permit.update({
     where: { id: permitId },
     data,
   });
+
+  return { ...updatedPermit, warnings: conflicts };
 }
 
 export async function logWork(permitId: string, actorId: string, notes: string, hours?: number) {

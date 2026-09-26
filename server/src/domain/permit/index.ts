@@ -27,3 +27,13 @@ export type {
   TransitionInput,
   TransitionResult,
 } from './transitions';
+
+export {
+  evaluateConflict,
+  locationOverlaps,
+} from './conflict';
+export type {
+  ConflictSeverity,
+  ConflictingPermit,
+  ConflictWarning,
+} from './conflict';

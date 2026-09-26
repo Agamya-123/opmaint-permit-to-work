@@ -413,4 +413,65 @@ describe('Opmaint PTW REST API Integration Tests', () => {
       expect(resActiveList.body.data.some((p: any) => p.id === expirablePermitId)).toBe(false);
     });
   });
+
+  describe('8. Permit Safety Conflict Detection API', () => {
+    let confinedPermitId: string;
+    const startTime = new Date(Date.now() + 3600000 * 5); // 5 hours from now
+    const endTime = new Date(Date.now() + 3600000 * 10); // 10 hours from now
+
+    it('creates an active/approved CONFINED_SPACE permit', async () => {
+      const createRes = await request(app)
+        .post('/api/permits')
+        .set('Authorization', `Bearer ${requesterToken}`)
+        .send({
+          type: 'CONFINED_SPACE',
+          plantId,
+          areaId,
+          equipmentId,
+          contractorTeam: 'CleanTank Inc',
+          workDescription: 'Cleaning inside storage vessel',
+          plannedStart: startTime.toISOString(),
+          plannedEnd: endTime.toISOString(),
+          hazards: ['Toxic gases'],
+          ppe: ['Respirator'],
+          precautions: [{ label: 'Continuous ventilation', checked: true }],
+        });
+
+      expect(createRes.status).toBe(201);
+      confinedPermitId = createRes.body.id;
+
+      // Submit permit
+      await request(app)
+        .post(`/api/permits/${confinedPermitId}/submit`)
+        .set('Authorization', `Bearer ${requesterToken}`);
+    });
+
+    it('detects HOT_WORK overlapping with CONFINED_SPACE permit and returns warnings', async () => {
+      const res = await request(app)
+        .post('/api/permits')
+        .set('Authorization', `Bearer ${requesterToken}`)
+        .send({
+          type: 'HOT_WORK',
+          plantId,
+          areaId,
+          equipmentId,
+          contractorTeam: 'Apex Welding Corp',
+          workDescription: 'Hot work welding pipeline near vessel',
+          plannedStart: new Date(startTime.getTime() + 1800000).toISOString(), // 30 min after start
+          plannedEnd: new Date(endTime.getTime() - 1800000).toISOString(), // 30 min before end
+          hazards: ['Sparks', 'Open flame'],
+          ppe: ['Face shield'],
+          precautions: [{ label: 'Fire watch', checked: true }],
+        });
+
+      expect(res.status).toBe(201);
+      expect(res.body.warnings).toBeDefined();
+      expect(res.body.warnings.length).toBeGreaterThanOrEqual(1);
+
+      const warning = res.body.warnings.find((w: any) => w.code === 'HOT_WORK_CONFINED_SPACE_OVERLAP');
+      expect(warning).toBeDefined();
+      expect(warning.severity).toBe('CRITICAL');
+      expect(warning.conflictingPermit.id).toBe(confinedPermitId);
+    });
+  });
 });
